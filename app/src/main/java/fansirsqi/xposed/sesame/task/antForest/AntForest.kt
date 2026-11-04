@@ -3755,76 +3755,16 @@ class AntForest : ModelTask(), EnergyCollectCallback {
      * 查询并管理用户巡护任务
      */
     private fun queryUserPatrol() {
-        val waitTime = 300L //增大查询等待时间，减少异常
         try {
-            do {
-                // 查询当前巡护任务
-                var jo = JSONObject(AntForestRpcCall.queryUserPatrol())
-                // GlobalThreadPools.sleepCompat(waitTime);
-                // 如果查询成功
-                if (ResChecker.checkRes(TAG + "查询巡护任务失败:", jo)) {
-                    // 查询我的巡护记录
-                    var resData = JSONObject(AntForestRpcCall.queryMyPatrolRecord())
-                    // GlobalThreadPools.sleepCompat(waitTime);
-                    if (resData.optBoolean("canSwitch")) {
-                        val records = resData.getJSONArray("records")
-                        for (i in 0..<records.length()) {
-                            val record = records.getJSONObject(i)
-                            val userPatrol = record.getJSONObject("userPatrol")
-                            // 如果存在未到达的节点，且当前模式为"silent"，则尝试切换巡护地图
-                            if (userPatrol.getInt("unreachedNodeCount") > 0) {
-                                if ("silent" == userPatrol.getString("mode")) {
-                                    val patrolConfig = record.getJSONObject("patrolConfig")
-                                    val patrolId = patrolConfig.getString("patrolId")
-                                    resData =
-                                        JSONObject(AntForestRpcCall.switchUserPatrol(patrolId))
-                                    GlobalThreadPools.sleepCompat(waitTime)
-                                    // 如果切换成功，打印日志并继续
-                                    if (ResChecker.checkRes(TAG + "切换巡护地图失败:", resData)) {
-                                        Log.forest("巡护⚖️-切换地图至$patrolId")
-                                    }
-                                    continue  // 跳过当前循环
-                                }
-                                break // 如果当前不是silent模式，则结束循环
-                            }
-                        }
-                    }
-                    // 获取用户当前巡护状态信息
-                    val userPatrol = jo.getJSONObject("userPatrol")
-                    val currentNode = userPatrol.getInt("currentNode")
-                    val currentStatus = userPatrol.getString("currentStatus")
-                    val patrolId = userPatrol.getInt("patrolId")
-                    val chance = userPatrol.getJSONObject("chance")
-                    val leftChance = chance.getInt("leftChance")
-                    val leftStep = chance.getInt("leftStep")
-                    val usedStep = chance.getInt("usedStep")
-                    if ("STANDING" == currentStatus) { // 当前巡护状态为"STANDING"
-                        if (leftChance > 0) { // 如果还有剩余的巡护次数，则开始巡护
-                            jo = JSONObject(AntForestRpcCall.patrolGo(currentNode, patrolId))
-                            GlobalThreadPools.sleepCompat(waitTime)
-                            patrolKeepGoing(jo.toString(), currentNode, patrolId) // 继续巡护
-                            continue  // 跳过当前循环
-                        } else if (leftStep >= 2000 && usedStep < 10000) { // 如果没有剩余的巡护次数但步数足够，则兑换巡护次数
-                            jo = JSONObject(AntForestRpcCall.exchangePatrolChance(leftStep))
-                            // GlobalThreadPools.sleepCompat(waitTime);
-                            if (ResChecker.checkRes(TAG + "兑换巡护次数失败:", jo)) { // 兑换成功，增加巡护次数
-                                val addedChance = jo.optInt("addedChance", 0)
-                                Log.forest("步数兑换⚖️[巡护次数*$addedChance]")
-                                continue  // 跳过当前循环
-                            } else {
-                                Log.record(TAG, jo.getString("resultDesc"))
-                            }
-                        }
-                    } else if ("GOING" == currentStatus) {
-                        patrolKeepGoing(null, currentNode, patrolId)
-                    }
-                } else {
-                    Log.record(TAG, jo.getString("resultDesc"))
-                }
-                break // 完成一次巡护任务后退出循环
-            } while (true)
+            ForestPatrol(
+                request = { method, params ->
+                    JSONObject(requestString(method, JSONArray().put(params).toString()))
+                },
+                pause = { GlobalThreadPools.sleepCompat(it) },
+                log = { Log.forest(it) }
+            ).run()
         } catch (t: Throwable) {
-            Log.printStackTrace(TAG, "queryUserPatrol err", t) // 打印异常堆栈
+            Log.printStackTrace(TAG, "新版保护地巡护失败", t)
         }
     }
 

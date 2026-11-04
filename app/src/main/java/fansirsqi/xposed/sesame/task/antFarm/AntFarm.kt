@@ -5214,6 +5214,7 @@ class AntFarm : ModelTask() {
                     list.add(AntFarmFamilyOption("feedFamilyAnimal", "帮喂小鸡"))
                     list.add(AntFarmFamilyOption("deliverMsgSend", "道早安"))
                     list.add(AntFarmFamilyOption("familyClaimReward", "领取奖励"))
+                    list.add(AntFarmFamilyOption("familyTakeawayRedPacket", "领取外卖红包任务（限时）"))
                     list.add(AntFarmFamilyOption("inviteFriendVisitFamily", "好友分享"))
                     list.add(AntFarmFamilyOption("assignRights", "使用顶梁柱特权"))
                     list.add(AntFarmFamilyOption("familyDrawInfo", "开扭蛋"))

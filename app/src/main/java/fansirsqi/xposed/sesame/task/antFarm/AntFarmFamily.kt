@@ -3,6 +3,7 @@ package fansirsqi.xposed.sesame.task.antFarm
 import fansirsqi.xposed.sesame.data.Status
 import fansirsqi.xposed.sesame.entity.AlipayUser
 import fansirsqi.xposed.sesame.extensions.JSONExtensions.toJSONArray
+import fansirsqi.xposed.sesame.hook.RequestManager.requestString
 import fansirsqi.xposed.sesame.model.modelFieldExt.SelectModelField
 import fansirsqi.xposed.sesame.task.antFarm.AntFarm.AnimalFeedStatus
 import fansirsqi.xposed.sesame.task.antFarm.AntFarm.AnimalInteractStatus
@@ -140,6 +141,15 @@ data object AntFarmFamily {
                 }
                 if (familyOptions.value.contains("ExchangeFamilyDecoration")) {
                     autoExchangeFamilyDecoration()
+                }
+                if (familyOptions.value.contains("familyTakeawayRedPacket")) {
+                    AntFarmFamilyTakeawayTask(
+                        request = { method, params ->
+                            GlobalThreadPools.sleepCompat(300L)
+                            JSONObject(requestString(method, JSONArray().put(params).toString()))
+                        },
+                        log = { Log.farm(it) }
+                    ).run()
                 }
             }
         } catch (e: Exception) {
