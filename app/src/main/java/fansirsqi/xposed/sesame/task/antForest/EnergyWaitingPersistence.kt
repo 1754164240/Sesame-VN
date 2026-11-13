@@ -2,11 +2,13 @@ package fansirsqi.xposed.sesame.task.antForest
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.core.type.TypeReference
+import fansirsqi.xposed.sesame.hook.ApplicationHook
 import fansirsqi.xposed.sesame.util.DataStore
 import fansirsqi.xposed.sesame.util.Log
 import fansirsqi.xposed.sesame.util.TimeUtil
 import fansirsqi.xposed.sesame.util.maps.UserMap
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -237,19 +239,24 @@ object EnergyWaitingPersistence {
 
         var restoredCount = 0
         var skippedCount = 0
+        val homeSnapshots = WaitingHomeSnapshotCache(
+            isPaused = { ApplicationHook.offline },
+            queryHome = { userId, fromTag -> AntForestRpcCall.queryFriendHomePage(userId, fromTag) }
+        )
 
-        tasks.forEach { task ->
+        for (task in tasks) {
             try {
-                // 重新查询用户主页以获取最新保护罩状态
-                val userHomeResponse = AntForestRpcCall.queryFriendHomePage(task.userId, task.fromTag)
-
-                if (userHomeResponse.isNullOrEmpty()) {
-                    Log.record(TAG, "  验证[${task.userName}]：无法获取主页信息，跳过恢复")
-                    skippedCount++
-                    return@forEach
+                // 同一好友的多个球共用本批次主页，失败响应不能视为没有保护罩。
+                val userHomeObj = homeSnapshots.getWhenAvailable(task.userId, task.fromTag) {
+                    // 暂停时挂起当前项，解除后重试，不返回部分恢复结果覆盖剩余任务。
+                    delay(1000)
                 }
 
-                val userHomeObj = org.json.JSONObject(userHomeResponse)
+                if (userHomeObj == null) {
+                    Log.record(TAG, "  验证[${task.userName}]：未取得成功主页响应，跳过恢复")
+                    skippedCount++
+                    continue
+                }
 
                 // 自己的账号：无论是否有保护罩都要恢复（到时间后直接收取）
                 if (task.isSelf()) {
@@ -263,7 +270,7 @@ object EnergyWaitingPersistence {
                     } else {
                         skippedCount++
                     }
-                    return@forEach
+                    continue
                 }
 
                 // 好友账号：如果保护罩覆盖能量成熟期则跳过
@@ -291,6 +298,8 @@ object EnergyWaitingPersistence {
 
                 // 添加短暂延迟，避免请求过快
                 kotlinx.coroutines.delay(200)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.record(TAG, "  验证任务[${task.userName}]时出错: ${e.message}，跳过")
                 skippedCount++

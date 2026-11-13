@@ -26,6 +26,7 @@ import fansirsqi.xposed.sesame.hook.internal.AlipayMiniMarkHelper
 import fansirsqi.xposed.sesame.hook.internal.LocationHelper
 import fansirsqi.xposed.sesame.hook.internal.AuthCodeHelper
 import fansirsqi.xposed.sesame.hook.internal.SecurityBodyHelper
+import fansirsqi.xposed.sesame.hook.captcha.CaptchaCoordinator
 import fansirsqi.xposed.sesame.hook.keepalive.SmartSchedulerManager
 import fansirsqi.xposed.sesame.hook.keepalive.SmartSchedulerManager.cleanup
 import fansirsqi.xposed.sesame.hook.keepalive.SmartSchedulerManager.schedule
@@ -92,7 +93,6 @@ class ApplicationHook {
     internal object BroadcastActions {
         const val RESTART: String = "com.eg.android.AlipayGphone.sesame.restart"
         const val RE_LOGIN: String = "com.eg.android.AlipayGphone.sesame.reLogin"
-        const val RESUME_VERIFIED: String = "com.eg.android.AlipayGphone.sesame.resumeVerified"
         const val STATUS: String = "com.eg.android.AlipayGphone.sesame.status"
         const val RPC_TEST: String = "com.eg.android.AlipayGphone.sesame.rpctest"
         const val MANUAL_TASK: String = "com.eg.android.AlipayGphone.sesame.manual_task"
@@ -196,6 +196,8 @@ class ApplicationHook {
                 mainHandler = Handler(Looper.getMainLooper())
                 Log.init(appContext!!)
                 ensureScheduler()
+                // 验证监听独立于抓包和业务 RPC 版本，进程中仅安装一次。
+                CaptchaCoordinator.install(classLoader!!)
 
                 SecurityBodyHelper.init(classLoader!!)
                 AlipayMiniMarkHelper.init(classLoader!!)
@@ -219,11 +221,6 @@ class ApplicationHook {
             val launcherClass = ReflectionHelper.findClass(AlipayClasses.LAUNCHER_ACTIVITY, classLoader)
             val onResumeMethod = ReflectionHelper.findMethodExact(launcherClass, "onResume")
             ModernXposedRuntime.hook(onResumeMethod, after = { invocation ->
-                (invocation.thisObject as? android.app.Activity)?.let { activity ->
-                    activity.window.decorView.post {
-                        RequestManager.showVerificationResumeDialog(activity)
-                    }
-                }
                 val targetUid = HookUtil.getUserId(classLoader!!)
                 if (targetUid == null) {
                     show("用户未登录")
@@ -346,11 +343,6 @@ class ApplicationHook {
                 })
 
                 BroadcastActions.RE_LOGIN -> reOpenApp()
-                BroadcastActions.RESUME_VERIFIED -> execute {
-                    if (RequestManager.resumeAfterManualVerification(intent)) {
-                        execHandler()
-                    }
-                }
                 BroadcastActions.RPC_TEST -> handleRpcTest(intent)
                 BroadcastActions.MANUAL_TASK -> {
                     record(TAG, "🚀 收到手动庄园任务指令")
@@ -812,7 +804,6 @@ class ApplicationHook {
                 val filter = IntentFilter()
                 filter.addAction(BroadcastActions.RESTART)
                 filter.addAction(BroadcastActions.RE_LOGIN)
-                filter.addAction(BroadcastActions.RESUME_VERIFIED)
                 filter.addAction(BroadcastActions.STATUS)
                 filter.addAction(BroadcastActions.RPC_TEST)
                 filter.addAction(BroadcastActions.MANUAL_TASK)
@@ -835,15 +826,15 @@ class ApplicationHook {
         }
 
         fun unregisterBroadcastReceiver(context: Context?) {
-            if (mBroadcastReceiver == null || context == null) return
-            try {
-                context.unregisterReceiver(mBroadcastReceiver)
-                record(TAG, "BroadcastReceiver unregistered")
-            } catch (_: Throwable) {
-                // ignore: receiver not registered
-            } finally {
-                mBroadcastReceiver = null
+            if (context == null) return
+            mBroadcastReceiver?.let { receiver ->
+                try {
+                    context.unregisterReceiver(receiver)
+                } catch (_: Throwable) {
+                    // 接收器尚未注册时无需处理。
+                }
             }
+            mBroadcastReceiver = null
         }
     }
 }

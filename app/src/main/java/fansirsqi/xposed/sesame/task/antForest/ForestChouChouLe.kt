@@ -336,7 +336,11 @@ class ForestChouChouLe {
             )
             if (!retryable) {
                 taskTryCount[taskKey]?.set(MAX_TASK_FAIL_COUNT)
-                Log.error(TAG, "${s.name} 任务不可重试，已停止: $name")
+                val code = resJson.optString("resultCode")
+                val description = resJson.optString("resultDesc").ifBlank {
+                    resJson.optString("memo").ifBlank { resJson.optString("desc") }
+                }
+                Log.error(TAG, "${s.name} 任务不可重试，已停止: $name [$code] $description")
             } else {
                 Log.error(TAG, "${s.name} 任务失败($currentAttempt): $name")
             }

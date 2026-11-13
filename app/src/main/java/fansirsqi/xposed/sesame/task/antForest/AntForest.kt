@@ -13,6 +13,7 @@ import fansirsqi.xposed.sesame.entity.OtherEntityProvider.listHealthcareOptions
 import fansirsqi.xposed.sesame.entity.VitalityStore
 import fansirsqi.xposed.sesame.entity.VitalityStore.Companion.getNameById
 import fansirsqi.xposed.sesame.util.GameTask
+import fansirsqi.xposed.sesame.hook.ApplicationHook
 import fansirsqi.xposed.sesame.hook.RequestManager.requestString
 import fansirsqi.xposed.sesame.hook.Toast
 import fansirsqi.xposed.sesame.hook.internal.AlipayMiniMarkHelper
@@ -685,11 +686,7 @@ class AntForest : ModelTask(), EnergyCollectCallback {
         // -----------------------------
         // 3️⃣ 只收能量时间段判断
         // -----------------------------
-        val now = Calendar.getInstance()
-        val hour = now.get(Calendar.HOUR_OF_DAY)
-        val minute = now.get(Calendar.MINUTE)
-        val isEnergyTime = TaskCommon.IS_ENERGY_TIME || hour == 7 && minute < 30
-        if (isEnergyTime) {
+        if (TaskCommon.IS_ENERGY_TIME) {
             // 关键改动：将循环放入后台线程，避免阻塞TaskRunner
             GlobalThreadPools.execute({ this.startEnergyCollectionLoop() })
             return false // 只收能量期间不执行正常任务，check()立刻返回
@@ -714,11 +711,8 @@ class AntForest : ModelTask(), EnergyCollectCallback {
                         // 每次循环更新状态
                         TaskCommon.update()
                         // 如果不在能量时间段，退出循环
-                        val now = Calendar.getInstance()
-                        val hour = now.get(Calendar.HOUR_OF_DAY)
-                        val minute = now.get(Calendar.MINUTE)
-                        if (!(TaskCommon.IS_ENERGY_TIME || hour == 7 && minute < 30)) {
-                            Log.record(TAG, "当前不在只收能量时间段，退出循环")
+                        if (!TaskCommon.IS_ENERGY_TIME || ApplicationHook.offline || TaskCommon.IS_MODULE_SLEEP_TIME) {
+                            Log.record(TAG, "当前不满足只收能量执行条件，退出循环")
                             break
                         }
                         // 收取自己能量（协程中执行）

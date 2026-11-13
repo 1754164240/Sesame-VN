@@ -253,8 +253,7 @@ object Notify {
 
     @SuppressLint("StaticFieldLeak")
     @JvmStatic
-    @JvmOverloads
-    fun sendNewNotification(title: String?, content: String?, resumeAction: PendingIntent? = null) {
+    fun sendNewNotification(title: String?, content: String?) {
         try {
             if (context == null) {
                 Log.error(TAG, "Context is null in sendErrorNotification, cannot proceed.")
@@ -274,9 +273,6 @@ object Notify {
                 .setContentText(content)
                 .setSubText("芝麻粒")
                 .setAutoCancel(true)
-            if (resumeAction != null) {
-                errorBuilder.addAction(android.R.drawable.ic_media_play, "已验证，恢复任务", resumeAction)
-            }
             if (context is Service) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     NotificationManagerCompat.from(context!!).notify(ERROR_NOTIFICATION_ID, errorBuilder.build())

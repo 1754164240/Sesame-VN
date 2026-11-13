@@ -24,6 +24,7 @@ class RpcRecoveryPolicy {
     private val reason = AtomicReference(RpcBlockReason.NONE)
     private val recoveryScheduled = AtomicBoolean(false)
     private val verificationNotified = AtomicBoolean(false)
+    private var reasonBeforeVerification = RpcBlockReason.NONE
 
     val blockReason: RpcBlockReason
         get() = reason.get()
@@ -63,6 +64,7 @@ class RpcRecoveryPolicy {
 
     @Synchronized
     fun onVerificationRequired(): RecoveryDecision {
+        if (reason.get() != RpcBlockReason.VERIFICATION) reasonBeforeVerification = reason.get()
         reason.set(RpcBlockReason.VERIFICATION)
         return if (verificationNotified.compareAndSet(false, true)) {
             RecoveryDecision.WAIT_FOR_MANUAL_VERIFICATION
@@ -89,6 +91,20 @@ class RpcRecoveryPolicy {
         reason.set(RpcBlockReason.NONE)
         recoveryScheduled.set(false)
         verificationNotified.set(false)
+        reasonBeforeVerification = RpcBlockReason.NONE
+    }
+
+    /** 只解除验证原因，保留验证前已经存在的网络熔断。 */
+    @Synchronized
+    fun finishVerification() {
+        if (reason.get() != RpcBlockReason.VERIFICATION) return
+        reason.set(reasonBeforeVerification)
+        reasonBeforeVerification = RpcBlockReason.NONE
+        verificationNotified.set(false)
+        if (reason.get() == RpcBlockReason.NONE) {
+            consecutiveFailures.set(0)
+            recoveryScheduled.set(false)
+        }
     }
 
     private fun scheduleNetworkRecoveryOnce(): RecoveryDecision {

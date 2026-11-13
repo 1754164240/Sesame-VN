@@ -9,6 +9,24 @@ import java.util.concurrent.atomic.AtomicInteger
 class RpcRecoveryPolicyTest {
 
     @Test
+    fun `完成验证不能解除之前已经存在的网络阻断`() {
+        val policy = RpcRecoveryPolicy()
+        policy.onNetworkFailure(1)
+        policy.onVerificationRequired()
+        policy.finishVerification()
+        assertEquals(RpcBlockReason.NETWORK, policy.blockReason)
+    }
+
+    @Test
+    fun `完成单独验证后可再次检测新挑战`() {
+        val policy = RpcRecoveryPolicy()
+        policy.onVerificationRequired()
+        policy.finishVerification()
+        assertEquals(RpcBlockReason.NONE, policy.blockReason)
+        assertEquals(RecoveryDecision.WAIT_FOR_MANUAL_VERIFICATION, policy.onVerificationRequired())
+    }
+
+    @Test
     fun `验证后晚到的成功响应不能解除暂停`() {
         val policy = RpcRecoveryPolicy()
         policy.onVerificationRequired()

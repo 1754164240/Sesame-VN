@@ -992,34 +992,39 @@ object EnergyWaitingManager {
 
                 Log.record(TAG, "🔄 从持久化存储恢复${loadedTasks.size}个蹲点任务...")
 
-                // 验证并重新添加任务
-                val restoredCount = EnergyWaitingPersistence.validateAndRestoreTasks(loadedTasks) { task ->
-                    taskMutex.withLock {
-                        try {
-                            // 检查任务是否已经存在（避免重复添加）
-                            if (waitingTasks.containsKey(task.taskId)) {
-                                 Log.record(TAG, "任务[${task.taskId}]已存在，跳过重复添加")
-                                return@withLock false
+                // 恢复批次完成前延迟写入，保留磁盘上的完整任务，避免暂停时落盘部分快照。
+                EnergyWaitingPersistence.beginBatch()
+                try {
+                    val restoredCount = EnergyWaitingPersistence.validateAndRestoreTasks(loadedTasks) { task ->
+                        taskMutex.withLock {
+                            try {
+                                // 检查任务是否已经存在（避免重复添加）
+                                if (waitingTasks.containsKey(task.taskId)) {
+                                     Log.record(TAG, "任务[${task.taskId}]已存在，跳过重复添加")
+                                    return@withLock false
+                                }
+
+                                // 添加任务到内存
+                                waitingTasks[task.taskId] = task
+
+                                // 启动蹲点协程
+                                startPreciseWaitingCoroutine(task)
+
+                                true
+                            } catch (e: Exception) {
+                                Log.error(TAG, "恢复任务[${task.taskId}]失败: ${e.message}")
+                                false
                             }
-
-                            // 添加任务到内存
-                            waitingTasks[task.taskId] = task
-
-                            // 启动蹲点协程
-                            startPreciseWaitingCoroutine(task)
-
-                            true
-                        } catch (e: Exception) {
-                            Log.error(TAG, "恢复任务[${task.taskId}]失败: ${e.message}")
-                            false
                         }
                     }
-                }
 
-                if (restoredCount > 0) {
-                    Log.record(TAG, "✅ 成功恢复${restoredCount}个蹲点任务，避免重新遍历好友")
-                    // 保存更新后的任务列表
-                    EnergyWaitingPersistence.saveTasks(waitingTasks)
+                    if (restoredCount > 0) {
+                        Log.record(TAG, "✅ 成功恢复${restoredCount}个蹲点任务，避免重新遍历好友")
+                        // 保存更新后的任务列表
+                        EnergyWaitingPersistence.saveTasks(waitingTasks)
+                    }
+                } finally {
+                    EnergyWaitingPersistence.endBatch()
                 }
 
             } catch (e: Exception) {

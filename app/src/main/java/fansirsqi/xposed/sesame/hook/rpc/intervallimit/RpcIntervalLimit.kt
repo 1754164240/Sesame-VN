@@ -76,7 +76,8 @@ object RpcIntervalLimit {
                 GlobalThreadPools.sleepCompat(sleep)
             }
 
-            intervalLimit.time = now
+            // 记录实际放行时间，避免下一次请求扣掉本次等待后立即发出。
+            intervalLimit.time = System.currentTimeMillis()
         }
     }
 

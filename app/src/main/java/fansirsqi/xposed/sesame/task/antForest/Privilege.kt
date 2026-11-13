@@ -143,7 +143,11 @@ object Privilege {
         }
 
         if (result.optString("resultCode") != RPC_SUCCESS) {
-            Log.record("$PREFIX_SIGN 查询失败：${result.optString("resultDesc")}")
+            val code = result.optString("resultCode").ifBlank { result.optString("error", "未知") }
+            val message = result.optString("resultDesc").ifBlank {
+                result.optString("errorMessage", "未知错误")
+            }
+            Log.record("$PREFIX_SIGN 查询失败：[$code] $message")
             return
         }
 
