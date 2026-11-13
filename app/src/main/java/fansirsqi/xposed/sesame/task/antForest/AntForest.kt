@@ -142,6 +142,7 @@ class AntForest : ModelTask(), EnergyCollectCallback {
     private var pkEnergy: BooleanModelField? = null // PK能量开关
     private var energyPvpChallenge: BooleanModelField? = null // 1V1能量挑战领奖开关
     private var energyRain: BooleanModelField? = null // 能量雨开关
+    private var readForest: BooleanModelField? = null // 无纸阅读开关
     private var advanceTime: IntegerModelField? = null // 提前时间（毫秒）
     private var tryCount: IntegerModelField? = null // 尝试收取次数
     private var retryInterval: IntegerModelField? = null // 重试间隔（毫秒）
@@ -632,6 +633,7 @@ class AntForest : ModelTask(), EnergyCollectCallback {
                 "记得填兑换次数..亲爱的"
             ).also { vitalityExchangeList = it })
         modelFields.addField(BooleanModelField("userPatrol", "保护地巡护", false).also { userPatrol = it })
+        modelFields.addField(BooleanModelField("readForest", "无纸阅读", false).also { readForest = it })
         modelFields.addField(BooleanModelField("combineAnimalPiece", "合成动物碎片", false).also { combineAnimalPiece = it })
         modelFields.addField(BooleanModelField("consumeAnimalProp", "派遣动物伙伴", false).also { consumeAnimalProp = it })
         modelFields.addField(BooleanModelField("receiveForestTaskAward", "森林任务", false).also { receiveForestTaskAward = it })
@@ -1012,6 +1014,10 @@ class AntForest : ModelTask(), EnergyCollectCallback {
 
                 doforestgame()
 
+                if (readForest?.value == true) {
+                    ReadForestTask.execute()
+                    tc.countDebug("无纸阅读")
+                }
 
                 tc.stop()
             }
