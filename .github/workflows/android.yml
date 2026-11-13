@@ -13,6 +13,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: ⏰ Set Timezone to Asia/Shanghai
@@ -24,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: ☕ Set up JDK
         uses: actions/setup-java@v4
         with:
@@ -128,15 +130,29 @@ jobs:
 
       - name: 🛠️ Extract file names and version
         id: extract_info
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
         run: |
           arm64_file=$(basename "${{ steps.extract_apks.outputs.signed_arm64 }}")
           armv7_file=$(basename "${{ steps.extract_apks.outputs.signed_armv7 }}")
           x86_file=$(basename "${{ steps.extract_apks.outputs.signed_x86 }}")
           x86_64_file=$(basename "${{ steps.extract_apks.outputs.signed_x86_64 }}")
           universal_file=$(basename "${{ steps.extract_apks.outputs.signed_universal }}")
-          version="${{ github.ref_name }}"
-          artifact_version="${version//\//-}"
           release_date=$(date +%F)
+          commit_sha=$(git rev-parse HEAD)
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            # 正式发布沿用事件标签，不能再按分支名写回旧版本。
+            version="$RELEASE_TAG"
+            release_name="${RELEASE_NAME:-$version}"
+          else
+            # 每次运行及重跑使用独立标签，保留历史版本及其附件。
+            branch="${GITHUB_REF_NAME//\//-}"
+            version="auto-${branch}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${commit_sha:0:7}"
+            release_name="${release_date} · ${version}"
+          fi
+          artifact_version="${version//\//-}"
           echo "arm64_file=$arm64_file" >> $GITHUB_OUTPUT
           echo "armv7_file=$armv7_file" >> $GITHUB_OUTPUT
           echo "x86_file=$x86_file" >> $GITHUB_OUTPUT
@@ -145,6 +161,8 @@ jobs:
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "artifact_version=$artifact_version" >> $GITHUB_OUTPUT
           echo "release_date=$release_date" >> $GITHUB_OUTPUT
+          echo "release_name=$release_name" >> $GITHUB_OUTPUT
+          echo "commit_sha=$commit_sha" >> $GITHUB_OUTPUT
 
       - name: 🎨 Generate APKS Checksum
         run: |
@@ -157,6 +175,8 @@ jobs:
       - name: 📝 Generate Dynamic Message
         id: commit_info
         shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           # 初始化一个临时文件名
           MESSAGE_FILE=$(mktemp)
@@ -168,7 +188,6 @@ jobs:
 
           elif [[ "${{ github.event_name }}" == "pull_request" && -n '${{ toJSON(github.event.pull_request) }}' && '${{ toJSON(github.event.pull_request) }}' != 'null' ]]; then
             echo "Source: Pull Request Event"
-            PR_TITLE="${{ github.event.pull_request.title }}"
             PR_URL="${{ github.event.pull_request.html_url }}"
             API_URL="${{ github.event.pull_request.commits_url }}"
 
@@ -197,35 +216,24 @@ jobs:
           # 清理临时文件
           rm "$MESSAGE_FILE"
 
-      - name: 🚀 Upload Assets to Source Release
-        if: github.event_name == 'release' && github.event.action == 'published'
+      - name: 🚀 Publish Release
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ steps.extract_info.outputs.release_date }}
+          name: ${{ steps.extract_info.outputs.release_name }}
           files: |
             ${{ steps.extract_apks.outputs.signed_arm64 }}
-          tag_name: ${{ steps.extract_info.outputs.version}}
-          draft: false
-          append_body: true
-          make_latest: true
-          generate_release_notes: false
-          body: |
-            > ## 下载说明
-            <b>- arm64-v8a:</b> 适用于64位ARM设备 (主流新手机)
-
-      - name: 🔁 Sync Release to Target Repository
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ steps.extract_info.outputs.release_date }} # 发布的名称。默认为标签名称
-          files: |
-            ${{ steps.extract_apks.outputs.signed_arm64 }}
-          tag_name: ${{ steps.extract_info.outputs.version}}
+          tag_name: ${{ steps.extract_info.outputs.version }}
+          target_commitish: ${{ steps.extract_info.outputs.commit_sha }}
+          overwrite_files: false
+          fail_on_unmatched_files: true
           draft: false
           make_latest: true
           body: |
-            📦 内容同步自源仓库 [Sesame-VN](https://github.com/${{ github.repository }})
-            
             ${{ github.event.release.body }}
+
+            📦 构建版本：`${{ steps.extract_info.outputs.version }}`
+            源码提交：[`${{ steps.extract_info.outputs.commit_sha }}`](https://github.com/${{ github.repository }}/commit/${{ steps.extract_info.outputs.commit_sha }})
             
             > ## 下载说明
             <b>- arm64-v8a:</b> 适用于64位ARM设备 (主流新手机)
