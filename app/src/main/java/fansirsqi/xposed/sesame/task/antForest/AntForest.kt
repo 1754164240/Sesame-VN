@@ -246,6 +246,14 @@ class AntForest : ModelTask(), EnergyCollectCallback {
     private val skipUsersCache: ConcurrentHashMap<String, String> = ConcurrentHashMap<String, String>()
 
     private var forestChouChouLe: BooleanModelField? = null //森林抽抽乐
+    private var forestHuntTasks: BooleanModelField? = null
+    private var forestHuntDraw: BooleanModelField? = null
+    private var forestHuntHelp: BooleanModelField? = null
+    private var forestHuntForceNormal: BooleanModelField? = null
+    private var forestHuntForceActivity: BooleanModelField? = null
+    private var forestHuntShareIds: StringModelField? = null
+    private var forestHuntAutoBlacklist: BooleanModelField? = null
+    private var forestHuntBlacklist: SelectModelField? = null
 
     /**
      * 加速器定时
@@ -640,6 +648,15 @@ class AntForest : ModelTask(), EnergyCollectCallback {
         modelFields.addField(BooleanModelField("receiveForestTaskAward", "森林任务", false).also { receiveForestTaskAward = it })
 
         modelFields.addField(BooleanModelField("forestChouChouLe", "森林寻宝任务", false).also { forestChouChouLe = it })
+        // 原总开关保持默认关闭，任务和抽奖子开关保留旧配置开启后的行为。
+        modelFields.addField(BooleanModelField("ForestHuntTasks", "森林寻宝 | 做任务及领奖", true).also { forestHuntTasks = it })
+        modelFields.addField(BooleanModelField("ForestHuntDraw", "森林寻宝 | 抽奖", true).also { forestHuntDraw = it })
+        modelFields.addField(BooleanModelField("ForestHuntHelp", "森林寻宝 | 好友助力", false).also { forestHuntHelp = it })
+        modelFields.addField(BooleanModelField("NORMALForestHuntHelp", "森林寻宝 | 普通场强制助力", false).also { forestHuntForceNormal = it })
+        modelFields.addField(BooleanModelField("ACTIVITYForestHuntHelp", "森林寻宝 | 活动场强制助力", false).also { forestHuntForceActivity = it })
+        modelFields.addField(StringModelField("ForestHuntShareIds", "森林寻宝 | 助力shareId（完整值或前缀，逗号或换行分隔）", "").also { forestHuntShareIds = it })
+        modelFields.addField(BooleanModelField("AutoAntForestHuntTaskList", "森林寻宝 | 自动黑名单", false).also { forestHuntAutoBlacklist = it })
+        modelFields.addField(SelectModelField("AntForestHuntTaskList", "森林寻宝 | 黑名单列表", linkedSetOf<String>(), ForestHuntTaskCatalogue::list).also { forestHuntBlacklist = it })
 
         modelFields.addField(BooleanModelField("collectGiftBox", "领取礼盒", false).also { collectGiftBox = it })
         modelFields.addField(BooleanModelField("ecoDailyTask", "森林任务 | 环保打卡", false).also { ecoDailyTask = it })
@@ -662,7 +679,7 @@ class AntForest : ModelTask(), EnergyCollectCallback {
                 "ecoLifeOption", "绿色行动 | 选项", LinkedHashSet<String?>(), listEcoLifeOptions(), "光盘行动需要先完成一次光盘打卡"
             ).also { ecoLifeOption = it })
 
-        modelFields.addField(StringModelField("queryInterval", "查询间隔(毫秒或毫秒范围)", "1000-2000").also { queryInterval = it })
+        modelFields.addField(StringModelField("queryInterval", "查询间隔(毫秒或毫秒范围)", "500-1000").also { queryInterval = it })
         modelFields.addField(StringModelField("collectInterval", "收取间隔(毫秒或毫秒范围)", "1000-1500").also { collectInterval = it })
         modelFields.addField(StringModelField("doubleCollectInterval", "双击间隔(毫秒或毫秒范围)", "800-2400").also { doubleCollectInterval = it })
         modelFields.addField(BooleanModelField("balanceNetworkDelay", "平衡网络延迟", true).also { balanceNetworkDelay = it })
@@ -776,16 +793,17 @@ class AntForest : ModelTask(), EnergyCollectCallback {
         instance = this
 
 
-        // 安全创建各种区间限制
-        val queryIntervalLimit = createSafeIntervalLimit(
-            queryInterval!!.value, 10, 10000, "查询间隔"
+        // 自己主页和好友主页分别保存锁与放行时间，避免查询时互相占用等待窗口。
+        addIntervalLimit(
+            "alipay.antforest.forest.h5.queryHomePage",
+            createSafeIntervalLimit(queryInterval!!.value, 10, 10000, "自己主页查询间隔")
         )
-
-        // 添加RPC间隔限制
-        addIntervalLimit("alipay.antforest.forest.h5.queryHomePage", queryIntervalLimit)
-        addIntervalLimit("alipay.antforest.forest.h5.queryFriendHomePage", queryIntervalLimit)
-        addIntervalLimit("alipay.antmember.forest.h5.collectEnergy", 300)
-        addIntervalLimit("alipay.antmember.forest.h5.queryEnergyRanking", 300)
+        addIntervalLimit(
+            "alipay.antforest.forest.h5.queryFriendHomePage",
+            createSafeIntervalLimit(queryInterval!!.value, 10, 10000, "好友主页查询间隔")
+        )
+        addIntervalLimit("alipay.antmember.forest.h5.collectEnergy", 0)
+        addIntervalLimit("alipay.antmember.forest.h5.queryEnergyRanking", 100)
         addIntervalLimit("alipay.antforest.forest.h5.fillUserRobFlag", 500)
 
         // 设置其他参数
@@ -1001,7 +1019,24 @@ class AntForest : ModelTask(), EnergyCollectCallback {
                 }
 
                 if (forestChouChouLe!!.value) {
-                    val chouChouLe = ForestChouChouLe()
+                    val runUid = UserMap.currentUid
+                    val executionGuard = captureExecutionGuard()
+                    val chouChouLe = ForestChouChouLe(
+                        options = ForestHuntOptions(
+                            doTasks = forestHuntTasks!!.value, draw = forestHuntDraw!!.value,
+                            assist = forestHuntHelp!!.value, forceNormal = forestHuntForceNormal!!.value,
+                            forceActivity = forestHuntForceActivity!!.value,
+                            shareIds = forestHuntShareIds!!.value.split(Regex("[,，;；\\s]+")).filter { it.isNotBlank() }.toSet(),
+                            blacklist = forestHuntBlacklist!!.value.toSet(), autoBlacklist = forestHuntAutoBlacklist!!.value
+                        ),
+                        active = { executionGuard.asBoolean && UserMap.currentUid == runUid },
+                        onTask = ForestHuntTaskCatalogue::remember,
+                        onBlocked = { title ->
+                            if (executionGuard.asBoolean && UserMap.currentUid == runUid && forestHuntBlacklist!!.value.add(title)) {
+                                fansirsqi.xposed.sesame.data.Config.save(runUid, true)
+                            }
+                        }
+                    )
                     chouChouLe.chouChouLe()
                     tc.countDebug("抽抽乐")
                 }

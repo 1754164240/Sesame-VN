@@ -149,6 +149,10 @@ class AntOceanAiFishTest {
                 home("CAN_TOUCH", 0, 0),
                 home("CAN_TOUCH", 0, 0)
             ),
+            mainTasks = dequeOf(
+                taskList,
+                taskResponse(task("AIFISH_ZHUANHUA_BWXRK", "RECEIVED", 0))
+            ),
             defaultMainTasks = taskList
         )
 
@@ -159,6 +163,17 @@ class AntOceanAiFishTest {
             listOf("ANTAIFISH|AIFISH_ZHUANHUA_BWXRK"),
             gateway.finishCalls
         )
+    }
+
+    @Test
+    fun `每日一次任务回查未推进时允许下轮重试`() {
+        val gateway = FakeGateway(
+            homes = dequeOf(home("CAN_TOUCH", 0, 0), home("CAN_TOUCH", 0, 0)),
+            defaultMainTasks = taskResponse(task("AIFISH_ZHUANHUA_BWXRK", "TODO", 0))
+        )
+        AntOcean.AiFishRunner(gateway).run()
+        AntOcean.AiFishRunner(gateway).run()
+        assertEquals(2, gateway.finishCalls.size)
     }
 
     @Test

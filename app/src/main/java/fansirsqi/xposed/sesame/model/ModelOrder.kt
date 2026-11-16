@@ -16,6 +16,8 @@ import fansirsqi.xposed.sesame.task.greenFinance.GreenFinance
 import fansirsqi.xposed.sesame.task.other.OtherTask
 import fansirsqi.xposed.sesame.task.reserve.Reserve
 
+import fansirsqi.xposed.sesame.task.goldenbeans.GoldenBeans
+
 object ModelOrder {
     private val array = arrayOf(
         BaseModel::class.java,       // 基础设置
@@ -27,6 +29,7 @@ object ModelOrder {
         AntDodo::class.java,       // 神奇物种
         AntCooperate::class.java,    // 合种
         AntMember::class.java,     // 会员
+        GoldenBeans::class.java,   // 金豆夺宝
         AntOrchard::class.java,    // 农场
         AntSports::class.java,       // 运动
         EcoProtection::class.java,     // 古树

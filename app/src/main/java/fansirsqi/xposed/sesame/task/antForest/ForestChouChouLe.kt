@@ -1,12 +1,16 @@
 package fansirsqi.xposed.sesame.task.antForest
 
 import fansirsqi.xposed.sesame.data.Status
+import fansirsqi.xposed.sesame.hook.ApplicationHook
+import fansirsqi.xposed.sesame.hook.RequestManager
 import fansirsqi.xposed.sesame.task.TaskStatus
 import fansirsqi.xposed.sesame.util.GlobalThreadPools.sleepCompat
 import fansirsqi.xposed.sesame.util.Log
 import fansirsqi.xposed.sesame.util.ResChecker
 import fansirsqi.xposed.sesame.util.maps.UserMap
 import org.json.JSONObject
+import org.json.JSONArray
+import kotlinx.coroutines.CancellationException
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -14,7 +18,23 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 森林寻宝任务处理类 (每天自动执行, 完成后标记)
  */
-class ForestChouChouLe {
+data class ForestHuntOptions(
+    val doTasks: Boolean = true,
+    val draw: Boolean = true,
+    val assist: Boolean = false,
+    val forceNormal: Boolean = false,
+    val forceActivity: Boolean = false,
+    val shareIds: Set<String> = emptySet(),
+    val blacklist: Set<String> = emptySet(),
+    val autoBlacklist: Boolean = false
+)
+
+class ForestChouChouLe(
+    private val options: ForestHuntOptions = ForestHuntOptions(),
+    private val active: () -> Boolean = { true },
+    private val onTask: (String) -> Unit = {},
+    private val onBlocked: (String) -> Unit = {}
+) {
 
     companion object {
         private const val TAG = "ForestChouChouLe"
@@ -86,11 +106,32 @@ class ForestChouChouLe {
 
     private val taskTryCount = ConcurrentHashMap<String, AtomicInteger>()
     private val captureWaitTasks = ConcurrentHashMap.newKeySet<String>()
+    private val runUid = UserMap.currentUid
+    private val blocked = options.blacklist.toMutableSet()
 
-    fun chouChouLe() {
+    private fun checkActive() {
+        if (!active() || runUid.isNullOrBlank() || UserMap.currentUid != runUid ||
+            ApplicationHook.offline || RequestManager.isVerificationPaused() || Thread.currentThread().isInterrupted) {
+            throw CancellationException("森林寻宝已停止或切换账号")
+        }
+    }
+
+    private inline fun rpc(block: () -> String?): JSONObject? {
+        checkActive()
+        val result = block().orEmpty().toJson()
+        checkActive()
+        return result
+    }
+
+    private fun skipScene(s: Scene) = options.doTasks && options.draw && !options.assist &&
+        !options.forceNormal && !options.forceActivity && Status.hasFlagToday(s.flag)
+
+    suspend fun chouChouLe() {
         runCatching {
+            checkActive()
             val scenes = getScenes()
-            if (scenes.all { Status.hasFlagToday(it.flag) }) {
+            checkActive()
+            if (scenes.all { skipScene(it) }) {
                 Log.record("⏭️ 今天所有森林寻宝任务已完成, 跳过执行")
                 return
             }
@@ -100,11 +141,12 @@ class ForestChouChouLe {
                 processScene(it)
                 sleepCompat(100L)
             }
-        }.onFailure { Log.printStackTrace(TAG, "执行异常", it) }
+        }.onFailure { if (it is CancellationException) throw it else Log.printStackTrace(TAG, "执行异常", it) }
     }
 
-    private fun processScene(s: Scene) = runCatching {
-        if (Status.hasFlagToday(s.flag)) {
+    private suspend fun processScene(s: Scene) = runCatching {
+        checkActive()
+        if (skipScene(s)) {
             Log.record("⏭️ ${s.name} 今天已完成, 跳过")
             return@runCatching
         }
@@ -112,7 +154,7 @@ class ForestChouChouLe {
         Log.record("👉 开始处理: ${s.name}")
 
         // 1. 检查活动有效期
-        val enterResp = AntForestRpcCall.enterDrawActivityopengreen(s.id, s.code, SOURCE).toJson()
+        val enterResp = rpc { AntForestRpcCall.enterDrawActivityopengreen(s.id, s.code, SOURCE) }
         if (enterResp == null || !enterResp.check()) return@runCatching
 
         val drawActivity = enterResp.optJSONObject("drawActivity")
@@ -126,16 +168,51 @@ class ForestChouChouLe {
             }
         }
 
-        // 2. 循环处理任务 (执行 -> 领取)
-        processTasksLoop(s)
+        processAssist(s)
+
+        // 2. 任务、抽奖和助力分别受配置控制。
+        if (options.doTasks) processTasksLoop(s)
 
         // 3. 执行抽奖
-        processLottery(s)
+        if (options.draw) processLottery(s)
 
         // 4. 最终检查完成状态
-        checkCompletion(s)
+        if (options.doTasks && options.draw) checkCompletion(s)
 
-    }.onFailure { Log.printStackTrace(TAG, "${s.name} 处理异常", it) }
+    }.onFailure { if (it is CancellationException) throw it else Log.printStackTrace(TAG, "${s.name} 处理异常", it) }
+
+    private suspend fun processAssist(s: Scene) {
+        val force = if (s.code == SCENE_NORMAL) options.forceNormal else if (s.code == SCENE_ACTIVITY) options.forceActivity else false
+        if ((!options.assist && !force) || options.shareIds.isEmpty()) return
+        val taskType = if (s.code == SCENE_NORMAL) "FOREST_NORMAL_DRAW_SHARE" else if (s.code == SCENE_ACTIVITY) "FOREST_ACTIVITY_DRAW_SHARE" else return
+        val list = rpc { AntForestRpcCall.listTaskopengreen(s.taskCode, SOURCE) }
+        if (list == null || !list.check()) return
+        val tasks = list.optJSONArray("taskInfoList") ?: return
+        var p2pScene = ""
+        var targetBlocked = false
+        for (i in 0 until tasks.length()) {
+            val base = tasks.optJSONObject(i)?.optJSONObject("taskBaseInfo") ?: continue
+            val biz = base.optJSONObject("bizInfo") ?: runCatching { JSONObject(base.optString("bizInfo")) }.getOrNull() ?: continue
+            val name = biz.optString("title", base.optString("taskType"))
+            if (name.isNotBlank()) { checkActive(); onTask(name) }
+            if (base.optString("taskType") != taskType) continue
+            if (ForestHuntAssist.shareTaskBlocked(taskType, name, blocked)) { targetBlocked = true; continue }
+            if (options.assist) p2pScene = ForestHuntAssist.p2pScene(base)
+        }
+        if (targetBlocked) return
+        if (p2pScene.isBlank() && force) {
+            if (taskType in blocked) return
+            p2pScene = if (s.code == SCENE_NORMAL) "FOREST_NORMAL_20250829_SHARE" else "FOREST_NORMAL_20251024_SHARE"
+        }
+        if (p2pScene.isBlank()) return
+        val assist = ForestHuntAssist(
+            request = { method, body -> JSONObject(RequestManager.requestString(method, JSONArray().put(body).toString(), 1, 0)) },
+            checkpoint = { checkActive() }, hasFlag = Status::hasFlagToday, mark = Status::setFlagToday,
+            currentUserId = runUid.orEmpty()
+        )
+        val helped = assist.run(s.id, p2pScene, taskType, options.shareIds)
+        if (helped > 0) Log.forest("${s.name} 助力成功${helped}位好友")
+    }
 
     /**
      * 循环处理任务列表
@@ -143,13 +220,14 @@ class ForestChouChouLe {
     private fun processTasksLoop(s: Scene) {
         repeat(3) { loop ->
             Log.record("${s.name} 第 ${loop + 1} 轮任务检查")
-            val tasksResp = AntForestRpcCall.listTaskopengreen(s.taskCode, SOURCE).toJson() ?: return@repeat
+            val tasksResp = rpc { AntForestRpcCall.listTaskopengreen(s.taskCode, SOURCE) } ?: return@repeat
             if (!tasksResp.check()) return@repeat
 
             val taskList = tasksResp.optJSONArray("taskInfoList") ?: return@repeat
             var hasChange = false
 
             for (i in 0 until taskList.length()) {
+                checkActive()
                 val task = taskList.optJSONObject(i) ?: continue
                 if (processSingleTask(s, task)) {
                     hasChange = true
@@ -168,7 +246,7 @@ class ForestChouChouLe {
      * 执行抽奖逻辑
      */
     private fun processLottery(s: Scene) {
-        val enterResp = AntForestRpcCall.enterDrawActivityopengreen(s.id, s.code, SOURCE).toJson() ?: return
+        val enterResp = rpc { AntForestRpcCall.enterDrawActivityopengreen(s.id, s.code, SOURCE) } ?: return
         if (!enterResp.check()) return
 
         val drawAsset = enterResp.optJSONObject("drawAsset") ?: return
@@ -183,12 +261,14 @@ class ForestChouChouLe {
             retry++
             Log.record("${s.name} 第 $retry 次抽奖")
 
-            val drawResp = AntForestRpcCall.drawopengreen(s.id, s.code, SOURCE, UserMap.currentUid).toJson()
+            val before = balance
+            val drawResp = rpc { AntForestRpcCall.drawopengreen(s.id, s.code, SOURCE, runUid) }
             if (drawResp == null || !drawResp.check()) {
                 break
             }
 
-            balance = drawResp.optJSONObject("drawAsset")?.optInt("blance", 0) ?: 0
+            balance = drawResp.optJSONObject("drawAsset")?.optInt("blance", -1) ?: -1
+            if (balance < 0 || balance >= before) break
             val prize = drawResp.optJSONObject("prizeVO")
             if (prize != null) {
                 val name = prize.optString("prizeName", "未知奖品")
@@ -204,7 +284,7 @@ class ForestChouChouLe {
      * 检查是否所有任务都已完成，并设置 Flag
      */
     private fun checkCompletion(s: Scene) {
-        val resp = AntForestRpcCall.listTaskopengreen(s.taskCode, SOURCE).toJson() ?: return
+        val resp = rpc { AntForestRpcCall.listTaskopengreen(s.taskCode, SOURCE) } ?: return
         if (!resp.check()) return
 
         val taskList = resp.optJSONArray("taskInfoList") ?: return
@@ -235,7 +315,10 @@ class ForestChouChouLe {
         }
 
         Log.record("${s.name} 进度: $completed / $total")
-        if (allDone) {
+        val drawState = rpc { AntForestRpcCall.enterDrawActivityopengreen(s.id, s.code, SOURCE) }
+        val noDraws = drawState?.takeIf { it.check() }?.optJSONObject("drawAsset")?.optInt("blance", -1) == 0
+        if (allDone && noDraws) {
+            checkActive()
             Status.setFlagToday(s.flag)
             val msg = if (total > 0) "全部完成" else "无有效任务"
             Log.record("✅ ${s.name} $msg ($completed/$total)")
@@ -248,7 +331,7 @@ class ForestChouChouLe {
      * 判断任务是否在屏蔽列表中
      */
     private fun isBlockedTask(taskType: String, taskName: String): Boolean {
-        return ForestDrawTaskPolicy.actionFor(taskType, taskName) ==
+        return taskType in blocked || taskName in blocked || ForestDrawTaskPolicy.actionFor(taskType, taskName) ==
             ForestDrawTaskAction.WAIT_FOR_CAPTURE
     }
 
@@ -265,6 +348,9 @@ class ForestChouChouLe {
         val taskCode = baseInfo.optString("sceneCode")
         val taskStatus = baseInfo.optString("taskStatus")
         val taskType = baseInfo.optString("taskType")
+
+        checkActive()
+        if (taskName.isNotBlank()) onTask(taskName)
 
         if (isBlockedTask(taskType, taskName)) return false
 
@@ -303,6 +389,7 @@ class ForestChouChouLe {
             return false
         }
         val currentAttempt = taskTryCount.computeIfAbsent(taskKey) { AtomicInteger(0) }.incrementAndGet()
+        checkActive()
 
         val result = when (action) {
             ForestDrawTaskAction.EXCHANGE_VITALITY -> {
@@ -312,17 +399,20 @@ class ForestChouChouLe {
             ForestDrawTaskAction.FINISH_XLIGHT -> {
                 Log.record("${s.name} 执行任务(模拟耗时): $name")
                 sleepCompat(100L)
+                checkActive()
                 AntForestRpcCall.finishTask4Chouchoule(type, code)
             }
             ForestDrawTaskAction.FINISH_STANDARD -> {
                 Log.record("${s.name} 执行任务(模拟耗时): $name")
                 sleepCompat(100L)
+                checkActive()
                 AntForestRpcCall.finishTaskopengreen(type, code)
             }
             ForestDrawTaskAction.WAIT_FOR_CAPTURE -> return false
         }
 
         val resJson = result.toJson()
+        checkActive()
         return if (resJson != null && resJson.check()) {
             Log.forest("${s.name} 🧾 $name")
             true
@@ -336,6 +426,7 @@ class ForestChouChouLe {
             )
             if (!retryable) {
                 taskTryCount[taskKey]?.set(MAX_TASK_FAIL_COUNT)
+                if (options.autoBlacklist) { blocked += name; onBlocked(name) }
                 val code = resJson.optString("resultCode")
                 val description = resJson.optString("resultDesc").ifBlank {
                     resJson.optString("memo").ifBlank { resJson.optString("desc") }
@@ -357,7 +448,7 @@ class ForestChouChouLe {
     ): Boolean {
         Log.record("${s.name} 领取奖励: $name")
         sleepCompat(100L)
-        val res = AntForestRpcCall.receiveTaskAwardopengreen(SOURCE, code, type).toJson()
+        val res = rpc { AntForestRpcCall.receiveTaskAwardopengreen(SOURCE, code, type) }
         return if (res != null && res.check()) {
             taskTryCount.remove(taskKey)
             Log.forest("${s.name} 🧾 $name 奖励领取成功")

@@ -76,6 +76,14 @@ abstract class ModelTask : Model() {
     var isRunning = false
         protected set
 
+    /** Java 业务捕获本轮身份，后续取消或换代后旧流程不可继续执行。 */
+    fun captureExecutionGuard(): java.util.function.BooleanSupplier {
+        val expectedJob = synchronized(taskLifecycleLock) { currentTaskJob }
+        return java.util.function.BooleanSupplier {
+            expectedJob != null && expectedJob.isActive && currentTaskJob === expectedJob
+        }
+    }
+
     /** 增加任务运行次数 */
     fun addRunCents() {
         this.runCents += 1

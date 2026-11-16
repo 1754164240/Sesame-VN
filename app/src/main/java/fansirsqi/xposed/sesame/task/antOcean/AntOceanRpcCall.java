@@ -82,6 +82,24 @@ public class AntOceanRpcCall {
         );
     }
 
+    public static String aiFishDraw() {
+        String image = "JNVwTJAPzqMAAAAAQOAAAAgA9KBtAQJr";
+        return RequestManager.requestString("alipay.antaifish.h5.drawFish", arguments(jsonObject(
+                "imgId", image, "imgUrl", "https://mdn.alipayobjects.com/afts/img/" + image + "/original?bz=ai_fish",
+                "source", "ANT_OCEAN", "uniqueId", getUniqueId())), 1, 0);
+    }
+
+    public static String aiFishAppraiseList() {
+        return RequestManager.requestString("alipay.antaifish.h5.queryNeedAppraiseFishList", buildAiFishOceanActionArgs(getUniqueId()));
+    }
+
+    public static String aiFishLike(String imageId, String seasonId, String userId) {
+        String unique = System.currentTimeMillis() + "_" + String.format(java.util.Locale.ROOT, "%08x", RandomUtil.nextInt(0, Integer.MAX_VALUE));
+        return RequestManager.requestString("alipay.antaifish.h5.fishAppraise", arguments(jsonObject(
+                "appraiseType", "LIKE", "imageId", imageId, "seasonId", seasonId,
+                "source", "ANT_OCEAN", "targetUserId", userId, "uniqueId", unique)), 1, 0);
+    }
+
     static String buildAiFishStatusArgs(String uniqueId) {
         return arguments(jsonObject(
                 "source", "nengliangtixing",

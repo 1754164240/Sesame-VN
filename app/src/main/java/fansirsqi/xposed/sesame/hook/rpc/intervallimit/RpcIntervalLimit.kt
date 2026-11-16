@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 object RpcIntervalLimit {
     private const val TAG = "RpcIntervalLimit"
-    private const val DEFAULT_INTERVAL = 500
+    private const val DEFAULT_INTERVAL = 50
     private val DEFAULT_INTERVAL_LIMIT = DefaultIntervalLimit(DEFAULT_INTERVAL)
     private val intervalLimitMap = ConcurrentHashMap<String, IntervalLimit>()
 

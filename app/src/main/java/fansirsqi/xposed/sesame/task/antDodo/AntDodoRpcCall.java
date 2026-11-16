@@ -7,6 +7,29 @@ import fansirsqi.xposed.sesame.util.RandomUtil;
 
 public class AntDodoRpcCall {
     private static final String VERSION = "20241203";
+
+    public static String scratchCard(String animalId, String bookId, String cardInstanceId) {
+        try {
+            JSONObject params = new JSONObject().put("animalId", animalId).put("bookId", bookId).put("cardInstanceId", cardInstanceId);
+            return RequestManager.requestString("alipay.antdodo.rpc.h5.scratchCard", "[" + params + "]", 1, 0);
+        } catch (Exception ignored) { return ""; }
+    }
+
+    public static String consumePropOnce(String propId, String propType, String animalId) {
+        try {
+            JSONObject params = new JSONObject().put("propId", propId).put("propType", propType);
+            if (animalId != null && !animalId.isEmpty()) params.put("extendInfo", new JSONObject().put("animalId", animalId));
+            return RequestManager.requestString("alipay.antdodo.rpc.h5.consumeProp", "[" + params + "]", 1, 0);
+        } catch (Exception ignored) { return ""; }
+    }
+
+    public static String socialOnce(String animalId, String userId) {
+        try {
+            JSONObject params = new JSONObject().put("actionCode", "GIFT_TO_FRIEND").put("source", "GIFT_TO_FRIEND_FROM_CC")
+                    .put("targetAnimalId", animalId).put("targetUserId", userId).put("triggerTime", String.valueOf(System.currentTimeMillis()));
+            return RequestManager.requestString("alipay.antdodo.rpc.h5.social", "[" + params + "]", 1, 0);
+        } catch (Exception ignored) { return ""; }
+    }
     /* 神奇物种 */
     public static String queryAnimalStatus() {
         return RequestManager.requestString("alipay.antdodo.rpc.h5.queryAnimalStatus",

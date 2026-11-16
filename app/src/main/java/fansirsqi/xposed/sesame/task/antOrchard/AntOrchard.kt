@@ -2,6 +2,8 @@ package fansirsqi.xposed.sesame.task.antOrchard
 
 import android.util.Base64
 import fansirsqi.xposed.sesame.data.Status
+import fansirsqi.xposed.sesame.data.Config
+import kotlinx.coroutines.CancellationException
 import fansirsqi.xposed.sesame.data.StatusFlags
 import fansirsqi.xposed.sesame.entity.AlipayUser
 import fansirsqi.xposed.sesame.hook.internal.SecurityBodyHelper
@@ -39,6 +41,15 @@ class AntOrchard : ModelTask() {
     // {{ 修改：分离果树和摇钱树的施肥次数配置 }}
     private lateinit var orchardSpreadManureCountMain: IntegerModelField
     private lateinit var orchardSpreadManureCountYeb: IntegerModelField
+
+    private lateinit var orchardChouChouLe: BooleanModelField
+    private lateinit var receiveOrchardGameStay: BooleanModelField
+    private lateinit var receiveSpreadManureStage: BooleanModelField
+    private lateinit var orchardOptionalPlay: BooleanModelField
+    private lateinit var autoOrchardDrawBlacklist: BooleanModelField
+    private lateinit var autoOrchardPlayBlacklist: BooleanModelField
+    private lateinit var orchardDrawBlacklist: SelectModelField
+    private lateinit var orchardPlayBlacklist: SelectModelField
 
     private lateinit var assistFriendList: SelectModelField
     //模式选择
@@ -86,12 +97,22 @@ class AntOrchard : ModelTask() {
             SelectModelField("assistFriendList", "助力好友列表", LinkedHashSet(), AlipayUser::getList).also { assistFriendList = it }
         )
 
+        modelFields.addField(BooleanModelField("orchardChouChouLe", "抽抽乐(阿肥寻宝记)", false).also { orchardChouChouLe = it })
+        modelFields.addField(BooleanModelField("receiveOrchardGameStay", "首页悬浮球游戏时长任务", false).also { receiveOrchardGameStay = it })
+        modelFields.addField(BooleanModelField("receiveSpreadManureStage", "领取施肥阶段丰收礼包", false).also { receiveSpreadManureStage = it })
+        modelFields.addField(BooleanModelField("orchardOptionalPlay", "农场乐园限定任务", false).also { orchardOptionalPlay = it })
+        modelFields.addField(BooleanModelField("autoOrchardDrawBlacklist", "抽抽乐任务 | 自动黑名单", false).also { autoOrchardDrawBlacklist = it })
+        modelFields.addField(SelectModelField("orchardDrawBlacklist", "抽抽乐任务 | 黑名单", LinkedHashSet(), { OrchardActivityTaskCatalog.options("draw") }).also { orchardDrawBlacklist = it })
+        modelFields.addField(BooleanModelField("autoOrchardPlayBlacklist", "农场乐园任务 | 自动黑名单", false).also { autoOrchardPlayBlacklist = it })
+        modelFields.addField(SelectModelField("orchardPlayBlacklist", "农场乐园任务 | 黑名单", LinkedHashSet(), { OrchardActivityTaskCatalog.options("play") }).also { orchardPlayBlacklist = it })
+
         return modelFields
     }
 
     override suspend fun runSuspend() {
         try {
             Log.record(TAG, "执行开始-$name")
+            userId = UserMap.currentUid
             executeIntervalInt = maxOf(executeInterval.value, 500)
 
             val indexResponse = AntOrchardRpcCall.orchardIndex()
@@ -158,6 +179,8 @@ class AntOrchard : ModelTask() {
                 triggerTbTask()
             }
 
+            runAdditionalOrchardActivities()
+
             // 摇钱树余额奖励 (每天7点后)
             receiveMoneyTreeReward()
 
@@ -175,6 +198,16 @@ class AntOrchard : ModelTask() {
                 orchardSpreadManure()
             }
 
+            if (receiveSpreadManureStage.value) {
+                val account = UserMap.currentUid
+                if (!account.isNullOrBlank() && account == userId) {
+                    val gateway = OrchardActivityRuntimeGateway(account, captureExecutionGuard())
+                    val workflow = OrchardActivityWorkflow(gateway, account, log = Log::farm)
+                    val refreshed = gateway.request(OrchardActivityProtocol.call("com.alipay.antfarm.orchardIndex", OrchardActivityProtocol.normal()))
+                    if (OrchardActivityProtocol.success(refreshed)) workflow.claimSpreadStage(refreshed)
+                }
+            }
+
             // 许愿 (仅根据果树计数判断，或者可以改为独立配置，此处保持原逻辑使用果树计数)
             val wateredMain = Status.getIntFlagToday(StatusFlags.FLAG_ANTORCHARD_SPREAD_MANURE_COUNT) ?: 0
             if (wateredMain in 3..<10) {
@@ -186,10 +219,47 @@ class AntOrchard : ModelTask() {
             // 助力
             orchardAssistFriend()
 
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (t: Throwable) {
             Log.printStackTrace(TAG, "start.run err:", t)
         } finally {
             Log.record(TAG, "执行结束-$name")
+        }
+    }
+
+    /** 新活动独立控制，不依赖常规肥料任务开关。 */
+    private suspend fun runAdditionalOrchardActivities() {
+        if (!orchardChouChouLe.value && !orchardOptionalPlay.value && !receiveOrchardGameStay.value) return
+        val account = userId?.takeIf { it.isNotBlank() && it == UserMap.currentUid } ?: return
+        val gateway = OrchardActivityRuntimeGateway(account, captureExecutionGuard())
+        val workflow = OrchardActivityWorkflow(
+            gateway, account,
+            drawBlacklist = orchardDrawBlacklist.value.toSet(),
+            optionalBlacklist = orchardPlayBlacklist.value.toSet(),
+            rememberTask = { kind, id, title -> OrchardActivityTaskCatalog.remember(account, kind, id, title) },
+            blacklistTask = { kind, id, title ->
+                val enabled = if (kind == "draw") autoOrchardDrawBlacklist.value else autoOrchardPlayBlacklist.value
+                if (enabled && gateway.canContinue()) {
+                    val field = if (kind == "draw") orchardDrawBlacklist else orchardPlayBlacklist
+                    if (id !in field.value) {
+                        field.value = LinkedHashSet(field.value).also { it.add(id) }
+                        Config.save(account, false)
+                        Log.farm("农场活动⏭️[$title]加入${if (kind == "draw") "抽抽乐" else "乐园"}黑名单")
+                    }
+                }
+            },
+            log = Log::farm
+        )
+        if (orchardChouChouLe.value) workflow.runDrawActivities()
+        if (orchardOptionalPlay.value) workflow.runOptionalPlay()
+        if (receiveOrchardGameStay.value) {
+            AntOrchardGameStayTask(
+                gateway, account,
+                isDone = { app -> Status.hasFlagToday("Orchard::gameStay::$account::$app") },
+                markDone = { app -> if (gateway.canContinue()) Status.setFlagToday("Orchard::gameStay::$account::$app") },
+                log = Log::farm
+            ).execute()
         }
     }
 

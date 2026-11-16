@@ -195,6 +195,11 @@ class AntFarm : ModelTask() {
      * 小鸡厨房
      */
     private var kitchen: BooleanModelField? = null
+    private var aiKitchen: BooleanModelField? = null
+    private var aiKitchenCook: BooleanModelField? = null
+    private var aiKitchenFinishTask: BooleanModelField? = null
+    private var aiKitchenAutoBlacklist: BooleanModelField? = null
+    private var aiKitchenBlacklist: SelectModelField? = null
 
     /**
      * 使用特殊食品
@@ -569,6 +574,11 @@ class AntFarm : ModelTask() {
                 false
             ).also { harvestProduce = it })
         modelFields.addField(BooleanModelField("kitchen", "小鸡厨房", false).also { kitchen = it })
+        modelFields.addField(BooleanModelField("aiKitchen", "小鸡大厨 | 开启", false).also { aiKitchen = it })
+        modelFields.addField(BooleanModelField("aiKitchenCook", "小鸡大厨 | 自动做美食", false).also { aiKitchenCook = it })
+        modelFields.addField(BooleanModelField("aiKitchenFinishTask", "小鸡大厨 | 自动完成食材任务", true).also { aiKitchenFinishTask = it })
+        modelFields.addField(BooleanModelField("AutoAntKitchenTaskList", "小鸡大厨 | 自动黑名单", true).also { aiKitchenAutoBlacklist = it })
+        modelFields.addField(SelectModelField("AntKitchenTaskList", "小鸡大厨 | 黑名单列表", linkedSetOf<String>(), AiKitchenTask::taskList).also { aiKitchenBlacklist = it })
         modelFields.addField(
             BooleanModelField(
                 "chickenDiary",
@@ -743,6 +753,12 @@ class AntFarm : ModelTask() {
                     cook()
                 }
                 tc.countDebug("小鸡厨房")
+            }
+
+            if (aiKitchen?.value == true) {
+                AiKitchenTask.execute(aiKitchenCook!!.value, aiKitchenFinishTask!!.value,
+                    aiKitchenAutoBlacklist!!.value, aiKitchenBlacklist!!)
+                tc.countDebug("小鸡大厨")
             }
 
             if (useNewEggCard!!.value) {

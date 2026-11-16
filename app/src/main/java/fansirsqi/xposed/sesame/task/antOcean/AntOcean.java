@@ -16,11 +16,14 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import fansirsqi.xposed.sesame.entity.AlipayBeach;
 import fansirsqi.xposed.sesame.entity.AlipayUser;
 import fansirsqi.xposed.sesame.data.Status;
 import fansirsqi.xposed.sesame.hook.Toast;
+import fansirsqi.xposed.sesame.hook.ApplicationHook;
+import fansirsqi.xposed.sesame.hook.RequestManager;
 import fansirsqi.xposed.sesame.model.ModelFields;
 import fansirsqi.xposed.sesame.model.ModelGroup;
 import fansirsqi.xposed.sesame.model.modelFieldExt.BooleanModelField;
@@ -90,6 +93,10 @@ public class AntOcean extends ModelTask {
 
     private BooleanModelField dailyOceanTask;
     private BooleanModelField aiFish;
+    private BooleanModelField aiFishAutoDraw;
+    private BooleanModelField aiFishAppraise;
+    private BooleanSupplier executionGuard = () -> false;
+    private String executionUid;
     private BooleanModelField cleanOcean;
     private ChoiceModelField cleanOceanType;
     private SelectModelField cleanOceanList;
@@ -113,6 +120,8 @@ public class AntOcean extends ModelTask {
         ModelFields modelFields = new ModelFields();
         modelFields.addField(dailyOceanTask = new BooleanModelField("dailyOceanTask", "海洋任务", false));
         modelFields.addField(aiFish = new BooleanModelField("aiFish", "AI摸鱼", false));
+        modelFields.addField(aiFishAutoDraw = new BooleanModelField("aiFishAutoDraw", "AI摸鱼 | 默认鱼自动开通画鱼", false));
+        modelFields.addField(aiFishAppraise = new BooleanModelField("aiFishAppraise", "AI摸鱼 | 点赞获得能量", false));
         modelFields.addField(cleanOcean = new BooleanModelField("cleanOcean", "清理 | 开启", false));
         modelFields.addField(cleanOceanType = new ChoiceModelField("cleanOceanType", "清理 | 动作", CleanOceanType.DONT_CLEAN, CleanOceanType.nickNames));
         modelFields.addField(cleanOceanList = new SelectModelField("cleanOceanList", "清理 | 好友列表", new LinkedHashSet<>(), AlipayUser::getList));
@@ -126,6 +135,8 @@ public class AntOcean extends ModelTask {
 
     @Override
     public void runJava() {
+        executionGuard = captureExecutionGuard();
+        executionUid = UserMap.INSTANCE.getCurrentUid();
         try {
             Log.record(TAG, "执行开始-" + getName());
 
@@ -138,7 +149,10 @@ public class AntOcean extends ModelTask {
                 receiveTaskAward();
             }
 
-            if (aiFish.getValue()) {
+            if ((aiFishAutoDraw.getValue() || aiFishAppraise.getValue()) && aiFishActive()) {
+                doAiFishEnhancement();
+            }
+            if (aiFish.getValue() && aiFishActive()) {
                 doAiFish();
             }
 
@@ -167,29 +181,30 @@ public class AntOcean extends ModelTask {
     private void doAiFish() {
         try {
             AiFishRunResult result = new AiFishRunner(new AiFishGateway() {
+                @Override public boolean active() { return aiFishActive(); }
                 @Override
                 public String queryStatus() {
-                    return AntOceanRpcCall.aiFishStatus();
+                    return aiFishActive() ? AntOceanRpcCall.aiFishStatus() : RequestManager.EMPTY_RPC_RESPONSE;
                 }
 
                 @Override
                 public String queryHome() {
-                    return AntOceanRpcCall.aiFishHomepage();
+                    return aiFishActive() ? AntOceanRpcCall.aiFishHomepage() : RequestManager.EMPTY_RPC_RESPONSE;
                 }
 
                 @Override
                 public String listTasks(String sceneCode) {
-                    return AntOceanRpcCall.aiFishListTasks(sceneCode);
+                    return aiFishActive() ? AntOceanRpcCall.aiFishListTasks(sceneCode) : RequestManager.EMPTY_RPC_RESPONSE;
                 }
 
                 @Override
                 public String finishTask(String sceneCode, String taskType) {
-                    return AntOceanRpcCall.aiFishFinishTask(sceneCode, taskType);
+                    return aiFishActive() ? AntOceanRpcCall.aiFishFinishTask(sceneCode, taskType) : RequestManager.EMPTY_RPC_RESPONSE;
                 }
 
                 @Override
                 public String receiveTaskAward(String sceneCode, String taskType) {
-                    return AntOceanRpcCall.aiFishReceiveTaskAward(sceneCode, taskType);
+                    return aiFishActive() ? AntOceanRpcCall.aiFishReceiveTaskAward(sceneCode, taskType) : RequestManager.EMPTY_RPC_RESPONSE;
                 }
 
                 @Override
@@ -204,12 +219,12 @@ public class AntOcean extends ModelTask {
 
                 @Override
                 public String rescueFish() {
-                    return AntOceanRpcCall.aiFishRescue();
+                    return aiFishActive() ? AntOceanRpcCall.aiFishRescue() : RequestManager.EMPTY_RPC_RESPONSE;
                 }
 
                 @Override
                 public String touchFish() {
-                    return AntOceanRpcCall.aiFishTouch();
+                    return aiFishActive() ? AntOceanRpcCall.aiFishTouch() : RequestManager.EMPTY_RPC_RESPONSE;
                 }
 
                 @Override
@@ -223,6 +238,28 @@ public class AntOcean extends ModelTask {
         } catch (Throwable t) {
             Log.printStackTrace(TAG, "AI摸鱼执行异常:", t);
         }
+    }
+
+    private boolean aiFishActive() {
+        return executionGuard.getAsBoolean() && !Thread.currentThread().isInterrupted()
+                && !ApplicationHook.offline && !RequestManager.isVerificationPaused()
+                && executionUid != null && !executionUid.isEmpty()
+                && executionUid.equals(UserMap.INSTANCE.getCurrentUid());
+    }
+
+    private void doAiFishEnhancement() {
+        new AiFishEnhancement(new AiFishEnhancement.Gateway() {
+            public boolean active() { return aiFishActive(); }
+            public String home() { return aiFishActive() ? AntOceanRpcCall.aiFishHomepage() : RequestManager.EMPTY_RPC_RESPONSE; }
+            public String status() { return aiFishActive() ? AntOceanRpcCall.aiFishStatus() : RequestManager.EMPTY_RPC_RESPONSE; }
+            public String draw() { return aiFishActive() ? AntOceanRpcCall.aiFishDraw() : RequestManager.EMPTY_RPC_RESPONSE; }
+            public String list() { return aiFishActive() ? AntOceanRpcCall.aiFishAppraiseList() : RequestManager.EMPTY_RPC_RESPONSE; }
+            public String like(String image, String season, String user) { return aiFishActive() ? AntOceanRpcCall.aiFishLike(image, season, user) : RequestManager.EMPTY_RPC_RESPONSE; }
+            public boolean limitedToday() { return Status.hasFlagToday("antOcean::aiFish::appraiseLimit"); }
+            public void markLimited() { if (active()) Status.setFlagToday("antOcean::aiFish::appraiseLimit"); }
+            public void waitMillis(long millis) { GlobalThreadPools.sleepCompat(millis); }
+            public void report(String message) { Log.forest("神奇海洋🐟" + message); }
+        }).run(aiFishAutoDraw.getValue(), aiFishAppraise.getValue());
     }
 
     public static void initBeach() {
@@ -1060,6 +1097,7 @@ public class AntOcean extends ModelTask {
     static final String AI_FISH_RESCUE_SCENE = "ANTAIFISH_RESCUE_AND_RESTORE";
 
     interface AiFishGateway {
+        default boolean active() { return true; }
         String queryStatus();
 
         String queryHome();
@@ -1364,6 +1402,7 @@ public class AntOcean extends ModelTask {
         }
 
         AiFishRunResult run() {
+            if (!gateway.active()) return result(false, false, 0);
             if (!isAiFishActionAccepted(gateway.queryStatus())) {
                 events.add("AI摸鱼状态接口不可用");
                 return result(false, false, 0);
@@ -1387,6 +1426,7 @@ public class AntOcean extends ModelTask {
         }
 
         private boolean rescueCapturedFish() {
+            if (!gateway.active()) return false;
             AiFishTask task = selectAiFishRescueTask(
                     parseAiFishTasks(gateway.listTasks(AI_FISH_RESCUE_SCENE))
             );
@@ -1396,6 +1436,7 @@ public class AntOcean extends ModelTask {
             }
             events.add("AI摸鱼找回任务等待" + task.getWaitSeconds() + "秒");
             gateway.waitMillis((task.getWaitSeconds() + 1L) * 1000L);
+            if (!gateway.active()) return false;
             if (!isAiFishActionAccepted(gateway.rescueFish())) {
                 events.add("AI摸鱼找回接口未受理");
                 return false;
@@ -1411,6 +1452,7 @@ public class AntOcean extends ModelTask {
             Set<String> attemptedTasks = new LinkedHashSet<>();
             Set<String> attemptedRewards = new LinkedHashSet<>();
             for (int pass = 0; pass < MAX_TASK_PASSES; pass++) {
+                if (!gateway.active()) return;
                 AiFishTaskSnapshot snapshot = parseAiFishTasks(
                         gateway.listTasks(AI_FISH_MAIN_SCENE)
                 );
@@ -1420,6 +1462,7 @@ public class AntOcean extends ModelTask {
                 }
                 boolean attemptedInPass = false;
                 for (AiFishTask task : snapshot.getTasks()) {
+                    if (!gateway.active()) return;
                     try {
                         if ("FINISHED".equalsIgnoreCase(task.getStatus())
                                 && attemptedRewards.add(task.getTaskType())) {
@@ -1449,15 +1492,16 @@ public class AntOcean extends ModelTask {
         private void finishAndConfirm(AiFishTask task, Set<String> attemptedRewards) {
             events.add("AI摸鱼任务等待" + task.getWaitSeconds() + "秒[" + task.getTitle() + "]");
             gateway.waitMillis(task.getWaitSeconds() * 1000L);
+            if (!gateway.active()) return;
             if (!isAiFishActionAccepted(
                     gateway.finishTask(task.getSceneCode(), task.getTaskType())
             )) {
                 events.add("AI摸鱼任务完成未受理[" + task.getTitle() + "]");
                 return;
             }
-            markCompletedTodayIfNeeded(task.getTaskType());
             AiFishTask after = queryMainTask(task.getTaskType());
             if (after != null && "FINISHED".equalsIgnoreCase(after.getStatus())) {
+                markCompletedTodayIfNeeded(task.getTaskType());
                 completedTaskCount++;
                 events.add("AI摸鱼任务完成已确认[" + task.getTitle() + "]");
                 if (attemptedRewards.add(task.getTaskType())) {
@@ -1473,6 +1517,7 @@ public class AntOcean extends ModelTask {
         }
 
         private void claimAndConfirm(AiFishTask task) {
+            if (!gateway.active()) return;
             if (!isAiFishActionAccepted(
                     gateway.receiveTaskAward(task.getSceneCode(), task.getTaskType())
             )) {
@@ -1489,6 +1534,7 @@ public class AntOcean extends ModelTask {
         }
 
         private AiFishTask queryMainTask(String taskType) {
+            if (!gateway.active()) return null;
             AiFishTaskSnapshot snapshot = parseAiFishTasks(
                     gateway.listTasks(AI_FISH_MAIN_SCENE)
             );
@@ -1509,12 +1555,13 @@ public class AntOcean extends ModelTask {
         }
 
         private void markCompletedTodayIfNeeded(String taskType) {
-            if (DAILY_ONCE_MAIN_TASK_TYPES.contains(taskType)) {
+            if (gateway.active() && DAILY_ONCE_MAIN_TASK_TYPES.contains(taskType)) {
                 gateway.markCompletedToday(taskType);
             }
         }
 
         private int touchAvailableFish() {
+            if (!gateway.active()) return 0;
             AiFishHomeSnapshot before = parseAiFishHome(gateway.queryHome());
             if (!before.isRecognized()) {
                 events.add("AI摸鱼主页复查结构未知");
@@ -1522,6 +1569,7 @@ public class AntOcean extends ModelTask {
             }
             int touchCount = 0;
             for (int count = 0; count < MAX_TOUCH_COUNT; count++) {
+                if (!gateway.active()) return touchCount;
                 if (before.getRemainTouchChance() == null
                         || before.getRemainTouchChance() <= 0) {
                     return touchCount;

@@ -315,7 +315,7 @@ public class AntForestRpcCall {
         jo.put("source", "ANTFOREST");
         jo.put("taskType", taskType);
         String args = "[" + jo + "]";
-        return RequestManager.requestString("com.alipay.antiep.finishTask", args);
+        return RequestManager.requestString("com.alipay.antiep.finishTask", args, 1, 0);
     }
 
     public static String antiepSign(String entityId, String userId, String sceneCode)
@@ -764,7 +764,7 @@ public class AntForestRpcCall {
 
         String args = "[" + requestData + "]";
         Log.record("AntForestRpcCall", "drawopengreen - 活动: " + activityId + ", 场景: " + sceneCode + ", source: " + source);
-        return RequestManager.requestString("com.alipay.antiepdrawprod.drawopengreen", args);
+        return RequestManager.requestString("com.alipay.antiepdrawprod.drawopengreen", args, 1, 0);
     }
 
     /** 森林抽抽乐-签到领取次数（最终修复版） */
@@ -780,7 +780,7 @@ public class AntForestRpcCall {
 
         String args = "[" + requestData + "]";
         Log.record("AntForestRpcCall", "receiveTaskAwardopengreen - 任务: " + taskType + ", source: " + source);
-        return RequestManager.requestString("com.alipay.antieptask.receiveTaskAwardopengreen", args);
+        return RequestManager.requestString("com.alipay.antieptask.receiveTaskAwardopengreen", args, 1, 0);
     }
 
     /** 森林抽抽乐-任务-活力值兑换抽奖次数（最终修复版） */
@@ -797,7 +797,7 @@ public class AntForestRpcCall {
 
         String args = "[" + requestData + "]";
         Log.record("AntForestRpcCall", "exchangeTimesFromTaskopengreen - 活动: " + activityId + ", 任务: " + taskType + ", source: " + source);
-        return RequestManager.requestString("com.alipay.antiepdrawprod.exchangeTimesFromTaskopengreen", args);
+        return RequestManager.requestString("com.alipay.antiepdrawprod.exchangeTimesFromTaskopengreen", args, 1, 0);
     }
 
     /** 森林抽抽乐-任务-广告（支持普通版和活动版） */
@@ -820,7 +820,7 @@ public class AntForestRpcCall {
         params.put("taskType", taskType);
         String args = "[" + params + "]";
         Log.record("AntForestRpcCall", "finishTask4Chouchoule - 任务: " + taskType);
-        return RequestManager.requestString("com.alipay.antiep.finishTask", args);
+        return RequestManager.requestString("com.alipay.antiep.finishTask", args, 1, 0);
     }
 
     /** 完成森林抽抽乐任务（支持普通版和活动版） */
@@ -837,7 +837,7 @@ public class AntForestRpcCall {
         params.put("taskType", taskType);
         String args = "[" + params + "]";
         Log.record("AntForestRpcCall", "finishTaskopengreen - 任务: " + taskType);
-        return RequestManager.requestString("com.alipay.antieptask.finishTaskopengreen", args);
+        return RequestManager.requestString("com.alipay.antieptask.finishTaskopengreen", args, 1, 0);
     }
 
     /** 根据道具类型获取道具组 */
