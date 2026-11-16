@@ -27,10 +27,10 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: ☕ Set up JDK
+      - name: ☕ Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: "17"
+          java-version: "21"
           distribution: "zulu"
           cache: gradle
       - name: 🤝 Set up Gradle
@@ -147,10 +147,10 @@ jobs:
             version="$RELEASE_TAG"
             release_name="${RELEASE_NAME:-$version}"
           else
-            # 每次运行及重跑使用独立标签，保留历史版本及其附件。
-            branch="${GITHUB_REF_NAME//\//-}"
-            version="auto-${branch}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${commit_sha:0:7}"
-            release_name="${release_date} · ${version}"
+            # 显示名取实际 APK 版本，每次构建及重跑仍使用独立标签保留历史附件。
+            app_version=$(jq -er '.elements[0].versionName | select(type == "string" and length > 0)' app/build/outputs/apk/release/output-metadata.json)
+            version="v${app_version}-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.${commit_sha:0:7}"
+            release_name="v${app_version}"
           fi
           artifact_version="${version//\//-}"
           echo "arm64_file=$arm64_file" >> $GITHUB_OUTPUT
